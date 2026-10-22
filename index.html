@@ -3,62 +3,105 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Tone and Spectrum</title>
+<title>Tone and Live Spectrum | 1 kHz Test Tool</title>
+<meta name="description" content="Play a 1 kHz tone or use your microphone. See the live frequency spectrum from 0 to 4 kHz in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232563eb'/%3E%3Cpath d='M5 24V16M10 24V8M15 24V13M20 24V5M25 24V18' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
-:root{--bg:#fafafa;--fg:#1a1a1a;--card:#fff;--line:#d0d0d0;--bar:#2563eb;--mark:#dc2626;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111;--fg:#eee;--card:#1c1c1c;--line:#444;--bar:#60a5fa;--mark:#f87171;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#111;--fg:#eee;--card:#1c1c1c;--line:#444;--bar:#60a5fa;--mark:#f87171;color-scheme:dark}
+:root{--bg:#fafafa;--fg:#1a1a1a;--card:#fff;--line:#d0d0d0;--bar:#2563eb;--mark:#dc2626;--ok:#15803d;--err:#b91c1c;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111;--fg:#eee;--card:#1c1c1c;--line:#444;--bar:#60a5fa;--mark:#f87171;--ok:#4ade80;--err:#f87171;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#111;--fg:#eee;--card:#1c1c1c;--line:#444;--bar:#60a5fa;--mark:#f87171;--ok:#4ade80;--err:#f87171;color-scheme:dark}
+*,*::before,*::after{box-sizing:border-box}
+html,body{max-width:100%;overflow-x:hidden}
 body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif}
-main{max-width:720px;margin:auto}
-button{padding:10px 16px;margin:0 8px 8px 0;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font-size:16px}
-canvas{width:100%;height:260px;background:var(--card);border:1px solid var(--line);border-radius:8px;display:block}
-#info{font-family:monospace;margin:8px 0}
+main{max-width:720px;margin:auto;min-width:0}
+h1{font-size:clamp(1.4rem,6vw,2rem);overflow-wrap:anywhere}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+button{flex:1 1 140px;padding:12px 16px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font-size:16px;cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
+button:focus-visible{outline:3px solid var(--bar);outline-offset:2px}
+canvas{width:100%;max-width:100%;height:260px;background:var(--card);border:1px solid var(--line);border-radius:8px;display:block}
+#info{font-family:monospace;margin:8px 0;overflow-wrap:anywhere}
+#msg{min-height:1.5em;margin:8px 0;font-weight:600;overflow-wrap:anywhere}
+#msg.ok{color:var(--ok)}
+#msg.err{color:var(--err)}
 </style>
 </head>
 <body>
 <main>
 <h1>Tone and live spectrum</h1>
-<button id="tone">Play 1 kHz tone</button>
-<button id="mic">Start mic</button>
+<div class="row">
+<button id="tone" type="button">Play 1 kHz tone</button>
+<button id="mic" type="button">Start mic</button>
+</div>
+<div id="msg" role="status" aria-live="polite"></div>
 <div id="info">Peak: none</div>
-<canvas id="c" width="1400" height="520"></canvas>
+<canvas id="c" width="1400" height="520" role="img" aria-label="Live frequency spectrum from 0 to 4 kHz"></canvas>
 <p>X axis: 0 to 4 kHz. Red line marks 1 kHz.</p>
 </main>
 <script>
-const ctx = new AudioContext();
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
 const analyser = ctx.createAnalyser();
-analyser.fftSize = 4096;               // 4096 samples per FFT
-analyser.smoothingTimeConstant = 0.6;  // smooths frame to frame
+analyser.fftSize = 4096;
+analyser.smoothingTimeConstant = 0.6;
 const data = new Uint8Array(analyser.frequencyBinCount);
 const c = document.getElementById('c'), g = c.getContext('2d');
 const info = document.getElementById('info');
+const msg = document.getElementById('msg');
 const MAXF = 4000;
 let osc = null, running = false;
 
+function say(text, type) {
+  msg.textContent = text;
+  msg.className = type || '';
+}
+
+function startDraw() {
+  if (!running) { running = true; draw(); }
+}
+
 document.getElementById('tone').onclick = async (e) => {
-  await ctx.resume();
-  if (osc) { osc.stop(); osc = null; e.target.textContent = 'Play 1 kHz tone'; return; }
-  osc = ctx.createOscillator();
-  osc.type = 'sine';
-  osc.frequency.value = 1000;
-  const vol = ctx.createGain();
-  vol.gain.value = 0.1;                // keep it quiet
-  osc.connect(vol).connect(ctx.destination);
-  osc.start();
-  e.target.textContent = 'Stop tone';
+  try {
+    await ctx.resume();
+    if (osc) {
+      osc.stop();
+      osc = null;
+      e.target.textContent = 'Play 1 kHz tone';
+      say('Success: The tone is off.', 'ok');
+      return;
+    }
+    osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 1000;
+    const vol = ctx.createGain();
+    vol.gain.value = 0.1;
+    osc.connect(vol);
+    vol.connect(ctx.destination);
+    osc.start();
+    e.target.textContent = 'Stop tone';
+    say('Success: The tone is on.', 'ok');
+  } catch (err) {
+    say('Error: The browser cannot play audio. Reload the page and try again.', 'err');
+  }
 };
 
 document.getElementById('mic').onclick = async (e) => {
-  await ctx.resume();
   try {
+    await ctx.resume();
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
     });
-    ctx.createMediaStreamSource(stream).connect(analyser); // not to speakers, avoids feedback
+    ctx.createMediaStreamSource(stream).connect(analyser);
     e.target.disabled = true;
-    if (!running) { running = true; draw(); }
+    startDraw();
+    say('Success: The microphone is on.', 'ok');
   } catch (err) {
-    info.textContent = 'Mic blocked: ' + err.message;
+    if (err.name === 'NotAllowedError') {
+      say('Error: The browser blocked the microphone. Allow the microphone in the site settings. Then try again.', 'err');
+    } else if (err.name === 'NotFoundError') {
+      say('Error: No microphone found. Connect a microphone. Then try again.', 'err');
+    } else {
+      say('Error: The microphone did not start. Reload the page and try again.', 'err');
+    }
   }
 };
 
