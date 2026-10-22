@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tone and Spectrum</title>
+<style>
+:root{--bg:#fafafa;--fg:#1a1a1a;--card:#fff;--line:#d0d0d0;--bar:#2563eb;--mark:#dc2626;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111;--fg:#eee;--card:#1c1c1c;--line:#444;--bar:#60a5fa;--mark:#f87171;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#111;--fg:#eee;--card:#1c1c1c;--line:#444;--bar:#60a5fa;--mark:#f87171;color-scheme:dark}
+body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif}
+main{max-width:720px;margin:auto}
+button{padding:10px 16px;margin:0 8px 8px 0;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font-size:16px}
+canvas{width:100%;height:260px;background:var(--card);border:1px solid var(--line);border-radius:8px;display:block}
+#info{font-family:monospace;margin:8px 0}
+</style>
+</head>
+<body>
+<main>
+<h1>Tone and live spectrum</h1>
+<button id="tone">Play 1 kHz tone</button>
+<button id="mic">Start mic</button>
+<div id="info">Peak: none</div>
+<canvas id="c" width="1400" height="520"></canvas>
+<p>X axis: 0 to 4 kHz. Red line marks 1 kHz.</p>
+</main>
+<script>
+const ctx = new AudioContext();
+const analyser = ctx.createAnalyser();
+analyser.fftSize = 4096;               // 4096 samples per FFT
+analyser.smoothingTimeConstant = 0.6;  // smooths frame to frame
+const data = new Uint8Array(analyser.frequencyBinCount);
+const c = document.getElementById('c'), g = c.getContext('2d');
+const info = document.getElementById('info');
+const MAXF = 4000;
+let osc = null, running = false;
+
+document.getElementById('tone').onclick = async (e) => {
+  await ctx.resume();
+  if (osc) { osc.stop(); osc = null; e.target.textContent = 'Play 1 kHz tone'; return; }
+  osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.value = 1000;
+  const vol = ctx.createGain();
+  vol.gain.value = 0.1;                // keep it quiet
+  osc.connect(vol).connect(ctx.destination);
+  osc.start();
+  e.target.textContent = 'Stop tone';
+};
+
+document.getElementById('mic').onclick = async (e) => {
+  await ctx.resume();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    ctx.createMediaStreamSource(stream).connect(analyser); // not to speakers, avoids feedback
+    e.target.disabled = true;
+    if (!running) { running = true; draw(); }
+  } catch (err) {
+    info.textContent = 'Mic blocked: ' + err.message;
+  }
+};
+
+function draw() {
+  requestAnimationFrame(draw);
+  analyser.getByteFrequencyData(data);
+  const css = getComputedStyle(document.documentElement);
+  const binHz = ctx.sampleRate / analyser.fftSize;
+  const n = Math.floor(MAXF / binHz);
+  g.clearRect(0, 0, c.width, c.height);
+  g.fillStyle = css.getPropertyValue('--bar');
+  let peak = 0, peakI = 0;
+  for (let i = 0; i < n; i++) {
+    const h = data[i] / 255 * c.height;
+    g.fillRect(i / n * c.width, c.height - h, Math.max(1, c.width / n), h);
+    if (data[i] > peak) { peak = data[i]; peakI = i; }
+  }
+  g.fillStyle = css.getPropertyValue('--mark');
+  g.fillRect(1000 / MAXF * c.width, 0, 2, c.height);
+  info.textContent = peak > 60
+    ? 'Peak: ' + Math.round(peakI * binHz) + ' Hz (bin width ' + binHz.toFixed(1) + ' Hz)'
+    : 'Peak: none';
+}
+</script>
+</body>
+</html>
